@@ -1,0 +1,10 @@
+config:
+  aws:profile: aws-cli
+  aws:region: ap-southeast-3
+  language: go
+  name: flunarizin
+  is_fifo: true
+  is_prod: true
+  is_public: true
+  url: https://example.com
+  token: DUMMYTOKEN

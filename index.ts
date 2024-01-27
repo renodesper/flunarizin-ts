@@ -28,9 +28,8 @@ class Params {
     {};
 }
 
-const getParams = (): Params => {
+const getParams = (config: pulumi.Config): Params => {
   const params = new Params();
-  const config = new pulumi.Config();
 
   params.language = config.require("language");
   params.name = config.require("name");
@@ -71,7 +70,7 @@ const getQueueName = (
   return queueName;
 };
 
-const newQueue = (
+const newSqsQueue = (
   params: Params,
   args: aws.sqs.QueueArgs,
   isDeadLetter: boolean
@@ -122,9 +121,9 @@ const newLambdaIamRolePolicy = (
 
 const newLambdaFunction = (
   name: string,
-  role: aws.iam.Role,
   language: string,
-  variables: pulumi.Input<{ [key: string]: pulumi.Input<string> }> | undefined
+  variables: pulumi.Input<{ [key: string]: pulumi.Input<string> }> | undefined,
+  role: aws.iam.Role
 ): aws.lambda.Function => {
   const args: {
     name: string;
@@ -166,9 +165,9 @@ const newLambdaFunction = (
 };
 
 const newEventSourceMapping = (
-  params: Params,
   queue: aws.sqs.Queue,
   fn: aws.lambda.Function,
+  name: string,
   batchSize: number
 ): aws.lambda.EventSourceMapping => {
   const args = {
@@ -177,10 +176,10 @@ const newEventSourceMapping = (
     batchSize: batchSize,
   };
 
-  return new aws.lambda.EventSourceMapping(params.name, args);
+  return new aws.lambda.EventSourceMapping(name, args);
 };
 
-const newFunctionUrl = (fn: aws.lambda.Function) => {
+const newLambdaFunctionUrl = (fn: aws.lambda.Function) => {
   const fnUrlArgs: aws.lambda.FunctionUrlArgs = {
     functionName: fn.name,
     authorizationType: "NONE",
@@ -196,7 +195,8 @@ const newFunctionUrl = (fn: aws.lambda.Function) => {
 };
 
 const main = () => {
-  const params = getParams();
+  const config = new pulumi.Config();
+  const params = getParams(config);
 
   if (!ALLOWED_LANGUAGES.includes(params.language || "")) {
     throw new Error("language is required");
@@ -209,7 +209,7 @@ const main = () => {
       messageRetentionSeconds: SEVEN_DAYS,
       visibilityTimeoutSeconds: AN_HOUR,
     };
-    const deadLetterQueue = newQueue(params, deadLetterQueueArgs, true);
+    const deadLetterQueue = newSqsQueue(params, deadLetterQueueArgs, true);
 
     const maxReceiveCount = 5;
     redrivePolicy = deadLetterQueue.arn.apply((arn) => {
@@ -230,7 +230,7 @@ const main = () => {
     queueArgs.redrivePolicy = redrivePolicy;
   }
 
-  const queue = newQueue(params, queueArgs, false);
+  const queue = newSqsQueue(params, queueArgs, false);
 
   const role = newLambdaIamRole(params);
   const rolePolicyName = `${params.name}-inline-policy`;
@@ -252,18 +252,18 @@ const main = () => {
 
   const fn = newLambdaFunction(
     params.name,
-    role,
     params.language,
-    params.variables
+    params.variables,
+    role
   );
 
   let fnUrl;
   if (params.isPublic) {
-    fnUrl = newFunctionUrl(fn);
+    fnUrl = newLambdaFunctionUrl(fn);
   }
 
   const batchSize = 1;
-  newEventSourceMapping(params, queue, fn, batchSize);
+  newEventSourceMapping(queue, fn, params.name, batchSize);
 
   const result: {
     queue: aws.sqs.Queue;
